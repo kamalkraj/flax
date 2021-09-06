@@ -42,6 +42,7 @@ UNSIGNED_FLOAT_RE = re.compile(
 MODULE_NUM_RE = re.compile(r'(.*)_\d+$')
 # Alternative schemes handled by `gfile`, e.g. on Google Cloud Storage (GCS).
 SCHEME_RE = re.compile('^(?P<scheme>[a-z][a-z0-9.+-]+://)?(?P<path>.*)', re.I)
+NUMBER_RE = re.compile(r'(\d+)$')
 
 PyTree = Any
 
@@ -50,6 +51,17 @@ def _checkpoint_path(ckpt_dir: str,
                      step: Union[int, str],
                      prefix: str = 'checkpoint_') -> str:
   return os.path.join(ckpt_dir, f'{prefix}{step}')
+
+
+def _checkpoint_path_step(path: str) -> Optional[int]:
+  """Returns the step number of a checkpoint path."""
+  match = NUMBER_RE.match(path)
+  if not match:
+    logging.log_every_n_seconds(logging.DEBUG,
+                                f'Path %s does not match %s.', 1,
+                                path, NUMBER_RE)
+    return None
+  return int(m.group(1))
 
 
 def natural_sort(file_list: Iterable[str], signed: bool = True) -> List[str]:
@@ -87,7 +99,8 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
                     step: int,
                     prefix: str = 'checkpoint_',
                     keep: int = 1,
-                    overwrite: bool = False) -> str:
+                    overwrite: bool = False,
+                    keep_every_n: Optional[int] = None) -> str:
   """Save a checkpoint of the model.
 
   Attempts to be pre-emption safe by writing to temporary before
@@ -101,6 +114,8 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
     keep: number of past checkpoint files to keep.
     overwrite: overwrite existing checkpoint files if a checkpoint
       at the current or a later step already exits (default: False).
+    keep_every_n: if defined, keep every n checkpoints (in addition to keeping
+      the last 'keep' checkpoints).
   Returns:
     Filename of saved checkpoint.
   """
@@ -150,6 +165,10 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
   if len(checkpoint_files) > keep:
     old_ckpts = checkpoint_files[:-keep]
     for path in old_ckpts:
+      if keep_every_n:
+        step_number = _checkpoint_path_step(path)
+        if step_number and (step_number % keep_every_n) == 0:
+          continue
       logging.info('Removing checkpoint at %s', path)
       gfile.remove(path)
 
